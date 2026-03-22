@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { EVENTS, WORLD_TOP3 } from '@/data/seed-data';
+import { getNoaLCMResults, getNoaTrajectory, NOA_BIRTH_YEAR } from '@/data/noa-results';
 import { getCurrentSwimmer } from '@/lib/swimmer-data';
 import type { Swimmer, SwimmerResult } from '@/lib/types';
 import { formatTime } from '@/lib/swim-utils';
@@ -54,12 +55,24 @@ export default function EventDetailPage() {
   const currentYear = new Date().getFullYear();
   const swimmerAge = currentYear - swimmer.birthYear;
 
-  // Build trajectory data for the chart
-  // For the swimmer, use a simple single-point trajectory from results
-  // (In a real app, this would come from historical data)
-  const swimmerTrajectory = swimmerTime
-    ? [{ age: swimmerAge, timeSeconds: swimmerTime }]
-    : [];
+  // Build trajectory data from full race history
+  // Best LCM time per year for trajectory line
+  const trajectoryPoints = getNoaTrajectory(slug);
+
+  // All individual LCM race results as scatter points
+  const allLCMRaces = getNoaLCMResults(slug).map(r => ({
+    age: parseInt(r.date.slice(0, 4)) - NOA_BIRTH_YEAR + (parseInt(r.date.slice(5, 7)) - 1) / 12,
+    timeSeconds: r.time,
+    date: r.date,
+    city: r.city,
+  }));
+
+  // Use trajectory points if we have full history, otherwise fall back to single PB
+  const swimmerTrajectory = trajectoryPoints.length > 0
+    ? trajectoryPoints
+    : swimmerTime
+      ? [{ age: swimmerAge, timeSeconds: swimmerTime }]
+      : [];
 
   const worldTop3ForChart = worldSwimmers.map((ws, i) => ({
     name: ws.swimmer.name,
@@ -96,6 +109,7 @@ export default function EventDetailPage() {
         <TrajectoryChart
           swimmerName={swimmer.name.split(' ')[0]}
           swimmerTrajectory={swimmerTrajectory}
+          allRaces={allLCMRaces}
           worldTop3={worldTop3ForChart}
         />
       </div>

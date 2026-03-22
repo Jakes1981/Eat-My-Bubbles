@@ -46,9 +46,25 @@ export interface ParsedMeet {
   course?: string;
 }
 
+export interface ParsedResult {
+  eventName: string;
+  distance: number;
+  stroke: string;
+  course: 'LCM' | 'SCM';
+  timeSeconds: number;
+  timeText: string;
+  finaPoints: number;
+  date: string;           // "12 Oct 2024"
+  dateISO: string;        // "2024-10-12"
+  city: string;
+  season: string;         // "2025", "2026"
+  ageAtSwim: number;      // calculated from birth year and date
+}
+
 export interface ParsedProfile {
   swimmer: ParsedSwimmer;
   personalBests: ParsedPersonalBest[];
+  allResults: ParsedResult[];
   meets: ParsedMeet[];
 }
 
@@ -297,8 +313,164 @@ export function parseSwimRankingsText(
       swimRankingsId: athleteId,
     },
     personalBests,
+    allResults: [],
     meets,
   };
+}
+
+/**
+ * Parse "All results" page from SwimRankings (one season at a time).
+ *
+ * Format:
+ *   50m Freestyle    Pts.
+ *   12 Oct 2024    Calgary    25m    28.40    344
+ *   8 Nov 2024    Calgary    25m    28.19    351
+ *   ...
+ *   100m Freestyle    Pts.
+ *   9 Nov 2024    Calgary    25m    1:00.32    410
+ *   ...
+ */
+export function parseSwimRankingsAllResults(
+  text: string,
+  birthYear: number,
+  season?: string
+): ParsedResult[] {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const results: ParsedResult[] = [];
+
+  let currentDistance = 0;
+  let currentStroke = '';
+  let currentEventName = '';
+  let isLapEvent = false;
+
+  // Detect season from header line like "All results, Season 2025 (1 Sep - 31 Aug 2025)"
+  let detectedSeason = season || '';
+  for (const line of lines) {
+    const seasonMatch = line.match(/Season\s+(\d{4})/);
+    if (seasonMatch) {
+      detectedSeason = seasonMatch[1];
+      break;
+    }
+  }
+
+  for (const line of lines) {
+    // Event header: "100m Freestyle    Pts." or "50m Butterfly    Pts."
+    const eventMatch = line.match(/^(\d+)m\s+([A-Za-z\s]+?)\s+Pts\.$/);
+    if (eventMatch) {
+      currentDistance = parseInt(eventMatch[1]);
+      const strokeRaw = eventMatch[2].trim();
+      isLapEvent = strokeRaw.toLowerCase().includes('lap');
+      currentStroke = normalizeStroke(strokeRaw);
+      currentEventName = `${currentDistance}m ${strokeRaw}`;
+      continue;
+    }
+
+    // Skip lap events
+    if (isLapEvent) continue;
+
+    // Skip if no current event
+    if (!currentDistance) continue;
+
+    // Result row: "12 Oct 2024    Calgary    25m    28.40    344"
+    // Also handles: "9 Nov 2024    Calgary    25m    1:00.32    410"
+    const resultMatch = line.match(
+      /^(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s{2,}([A-Za-zÀ-ÿ\s'-]+?)\s{2,}(25m|50m)\s{2,}(\d+[:.]\d+(?:\.\d+)?)\s{2,}(\d+|-)$/
+    );
+
+    if (resultMatch) {
+      const dateStr = resultMatch[1].trim();
+      const city = resultMatch[2].trim();
+      const courseStr = resultMatch[3];
+      const timeText = resultMatch[4];
+      const ptsStr = resultMatch[5];
+
+      const course = parseCourse(courseStr);
+      const timeSeconds = parseTimeToSeconds(timeText);
+      const finaPoints = ptsStr === '-' ? 0 : parseInt(ptsStr) || 0;
+      const dateISO = parseDateToISO(dateStr);
+      const ageAtSwim = calculateAge(birthYear, dateISO);
+
+      results.push({
+        eventName: currentEventName,
+        distance: currentDistance,
+        stroke: currentStroke,
+        course,
+        timeSeconds,
+        timeText,
+        finaPoints,
+        date: dateStr,
+        dateISO,
+        city,
+        season: detectedSeason,
+        ageAtSwim,
+      });
+      continue;
+    }
+
+    // Try tab-separated fallback
+    const parts = line.split(/\t+/);
+    if (parts.length >= 5 && currentDistance) {
+      const dateStr = parts[0]?.trim();
+      const city = parts[1]?.trim();
+      const courseStr = parts[2]?.trim();
+      const timeText = parts[3]?.trim();
+      const ptsStr = parts[4]?.trim();
+
+      if (dateStr?.match(/^\d{1,2}\s+[A-Za-z]+\s+\d{4}$/) &&
+          courseStr?.match(/^(25m|50m)$/) &&
+          timeText?.match(/^\d+[:.]\d+/)) {
+        const course = parseCourse(courseStr);
+        const timeSeconds = parseTimeToSeconds(timeText);
+        const finaPoints = ptsStr === '-' ? 0 : parseInt(ptsStr) || 0;
+        const dateISO = parseDateToISO(dateStr);
+        const ageAtSwim = calculateAge(birthYear, dateISO);
+
+        results.push({
+          eventName: currentEventName,
+          distance: currentDistance,
+          stroke: currentStroke,
+          course,
+          timeSeconds,
+          timeText,
+          finaPoints,
+          date: dateStr,
+          dateISO,
+          city,
+          season: detectedSeason,
+          ageAtSwim,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Parse date string "12 Oct 2024" → "2024-10-12"
+ */
+function parseDateToISO(dateStr: string): string {
+  const months: Record<string, string> = {
+    Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
+    Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12',
+  };
+  const match = dateStr.match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+  if (!match) return '';
+  const day = match[1].padStart(2, '0');
+  const month = months[match[2]] || '01';
+  const year = match[3];
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Calculate age at time of swim.
+ * Swimming age in Canada = age on Dec 31 of the competition year.
+ * But for trajectory, actual age at time of swim is more useful.
+ */
+function calculateAge(birthYear: number, dateISO: string): number {
+  if (!dateISO || !birthYear) return 0;
+  const swimYear = parseInt(dateISO.slice(0, 4));
+  return swimYear - birthYear;
 }
 
 /**
@@ -414,6 +586,7 @@ export function parseSwimRankingsHTML(
       swimRankingsId: athleteId,
     },
     personalBests,
+    allResults: [],
     meets,
   };
 }
