@@ -119,6 +119,8 @@ export default function TrajectoryChart({
             stroke="#64748B"
             tick={{ fill: '#64748B', fontSize: 12 }}
             tickLine={{ stroke: '#1E3050' }}
+            ticks={Array.from({ length: maxAge - minAge + 1 }, (_, i) => minAge + i)}
+            tickFormatter={(val: number) => String(Math.round(val))}
             label={{ value: 'Age', position: 'insideBottom', offset: -5, fill: '#64748B', fontSize: 12 }}
             allowDuplicatedCategory={false}
           />
