@@ -38,10 +38,10 @@ export default function TrajectoryChart({
 
   // Build data array
   const sortedAges = Array.from(allAges).sort((a, b) => a - b);
-  const minAge = Math.min(12, sortedAges[0] ?? 12);
-  const maxAge = Math.max(sortedAges[sortedAges.length - 1] ?? 18, 18);
+  const minAge = 12;
+  const maxAge = 35;
 
-  // Fill in all ages from min to max
+  // Fill in all ages from 12 to 35
   for (let age = minAge; age <= maxAge; age++) {
     ageMap.set(age, { age });
   }
