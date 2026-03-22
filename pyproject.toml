@@ -1,0 +1,23 @@
+[project]
+name = "noa-swimming"
+version = "0.1.0"
+description = "Competitive swimming performance data platform"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28",
+    "beautifulsoup4>=4.12",
+    "supabase>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+noa = "src.runner:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
