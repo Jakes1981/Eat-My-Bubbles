@@ -2,33 +2,29 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { SWIMMERS, SWIMMER_RESULTS, EVENTS, WORLD_TOP3 } from '@/data/seed-data';
-import type { Swimmer, SwimmerResult, SwimEvent } from '@/lib/types';
+import { getCurrentSwimmer, getAllEvents, getWorldBestTime } from '@/lib/swimmer-data';
+import type { Swimmer, SwimmerResult } from '@/lib/types';
 import EventCard from '@/components/EventCard';
 import NavBar from '@/components/NavBar';
 
 export default function EventsPage() {
   const router = useRouter();
-  const [swimmerId, setSwimmerId] = useState<string | null>(null);
   const [swimmer, setSwimmer] = useState<Swimmer | null>(null);
   const [results, setResults] = useState<SwimmerResult[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const id = localStorage.getItem('swimmerId');
-    if (!id) {
+    const data = getCurrentSwimmer();
+    if (!data.swimmer) {
       router.push('/');
       return;
     }
-    setSwimmerId(id);
-
-    const found = SWIMMERS.find((s) => s.id === id);
-    if (found) setSwimmer(found);
-
-    const swimmerResults = SWIMMER_RESULTS[id] ?? [];
-    setResults(swimmerResults);
+    setSwimmer(data.swimmer);
+    setResults(data.results);
+    setLoaded(true);
   }, [router]);
 
-  if (!swimmer) {
+  if (!loaded || !swimmer) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="w-8 h-8 border-2 border-[#06B6D4] border-t-transparent rounded-full animate-spin" />
@@ -36,18 +32,10 @@ export default function EventsPage() {
     );
   }
 
-  // Get world best for each event
-  function getWorldBest(eventSlug: string): number | undefined {
-    const entry = WORLD_TOP3.find(
-      (w) => w.eventSlug === eventSlug && w.gender === swimmer?.gender
-    );
-    if (!entry || entry.swimmers.length === 0) return undefined;
-    return entry.swimmers[0].swimmer.currentPB;
-  }
+  const events = getAllEvents();
 
   function getSwimmerTime(eventSlug: string): number | undefined {
-    const result = results.find((r) => r.eventSlug === eventSlug);
-    return result?.timeSeconds;
+    return results.find(r => r.eventSlug === eventSlug)?.timeSeconds;
   }
 
   return (
@@ -58,6 +46,11 @@ export default function EventsPage() {
         <h1 className="text-2xl font-bold text-white">
           {swimmer.name.split(' ')[0]}
         </h1>
+        {results.length > 0 && (
+          <p className="text-xs text-[#475569] mt-1">
+            {results.length} events tracked
+          </p>
+        )}
       </div>
 
       {/* Events Grid */}
@@ -66,12 +59,12 @@ export default function EventsPage() {
           My Events
         </h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {EVENTS.map((event) => (
+          {events.map((event) => (
             <EventCard
               key={event.slug}
               event={event}
               timeSeconds={getSwimmerTime(event.slug)}
-              worldBestSeconds={getWorldBest(event.slug)}
+              worldBestSeconds={getWorldBestTime(event.slug, swimmer.gender)}
             />
           ))}
         </div>

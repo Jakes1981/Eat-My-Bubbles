@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { SWIMMERS, SWIMMER_RESULTS, EVENTS, WORLD_TOP3 } from '@/data/seed-data';
-import type { Swimmer, SwimmerResult, WorldTop3Entry } from '@/lib/types';
+import { EVENTS, WORLD_TOP3 } from '@/data/seed-data';
+import { getCurrentSwimmer } from '@/lib/swimmer-data';
+import type { Swimmer, SwimmerResult } from '@/lib/types';
 import { formatTime } from '@/lib/swim-utils';
 import TrajectoryChart from '@/components/TrajectoryChart';
 import NavBar from '@/components/NavBar';
@@ -18,14 +19,13 @@ export default function EventDetailPage() {
   const [results, setResults] = useState<SwimmerResult[]>([]);
 
   useEffect(() => {
-    const id = localStorage.getItem('swimmerId');
-    if (!id) {
+    const data = getCurrentSwimmer();
+    if (!data.swimmer) {
       router.push('/');
       return;
     }
-    const found = SWIMMERS.find((s) => s.id === id);
-    if (found) setSwimmer(found);
-    setResults(SWIMMER_RESULTS[id] ?? []);
+    setSwimmer(data.swimmer);
+    setResults(data.results);
   }, [router]);
 
   const event = EVENTS.find((e) => e.slug === slug);

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { SWIMMERS, SWIMMER_RESULTS, EVENTS, WORLD_TOP3 } from '@/data/seed-data';
+import { EVENTS, WORLD_TOP3 } from '@/data/seed-data';
+import { getCurrentSwimmer } from '@/lib/swimmer-data';
 import type { Swimmer, SwimmerResult } from '@/lib/types';
 import { formatTime } from '@/lib/swim-utils';
 import PBTable from '@/components/PBTable';
@@ -14,14 +15,13 @@ export default function ProfilePage() {
   const [results, setResults] = useState<SwimmerResult[]>([]);
 
   useEffect(() => {
-    const id = localStorage.getItem('swimmerId');
-    if (!id) {
+    const data = getCurrentSwimmer();
+    if (!data.swimmer) {
       router.push('/');
       return;
     }
-    const found = SWIMMERS.find((s) => s.id === id);
-    if (found) setSwimmer(found);
-    setResults(SWIMMER_RESULTS[id] ?? []);
+    setSwimmer(data.swimmer);
+    setResults(data.results);
   }, [router]);
 
   if (!swimmer) {
