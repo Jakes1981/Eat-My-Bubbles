@@ -13,9 +13,9 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/events', label: 'Events', icon: '🏊' },
-  { href: '/profile', label: 'Profile', icon: '📊' },
+  { href: '/analysis', label: 'Analysis', icon: '📈' },
   { href: '/chat', label: 'Chat', icon: '💬' },
-  { href: '/admin', label: 'Admin', icon: '⚙️', adminOnly: true },
+  { href: '/profile', label: 'Profile', icon: '👤' },
 ];
 
 export default function NavBar() {
@@ -26,9 +26,7 @@ export default function NavBar() {
     setSwimmerId(localStorage.getItem('swimmerId'));
   }, []);
 
-  const visibleItems = NAV_ITEMS.filter(
-    (item) => !item.adminOnly || swimmerId === 'noa'
-  );
+  const visibleItems = NAV_ITEMS;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-[#0D1B2A]/95 backdrop-blur-lg border-t border-[#1E3050]">
