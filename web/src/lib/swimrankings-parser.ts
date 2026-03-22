@@ -1,15 +1,17 @@
 /**
  * SwimRankings.net page content parser.
  *
- * Parses the text content that a user copies from their SwimRankings
- * athlete profile page. Extracts personal details, personal bests,
- * and meet history.
+ * Parses the text content that a user copies (Cmd+A, Cmd+C) from their
+ * SwimRankings athlete profile page.
  *
- * The user flow:
- * 1. Open swimrankings.net/index.php?page=athleteDetail&athleteId=XXXXX
- * 2. Select All (Cmd+A / Ctrl+A)
- * 3. Copy (Cmd+C / Ctrl+C)
- * 4. Paste into our app
+ * Tested format (from actual SwimRankings page):
+ *
+ *   BURGER, Noa Josh
+ *   (2012  )
+ *   CAN - Canada
+ *   Calgary Patriots Swim Club
+ *   ...
+ *   100m Freestyle    50m    56.29    560    20 Feb 2026    Calgary (AB)    Meet Name
  */
 
 export interface ParsedSwimmer {
@@ -25,15 +27,16 @@ export interface ParsedSwimmer {
 }
 
 export interface ParsedPersonalBest {
-  eventName: string;       // e.g., "100 m Freestyle"
+  eventName: string;       // e.g., "100m Freestyle"
   distance: number;        // e.g., 100
   stroke: string;          // e.g., "Freestyle"
   course: 'LCM' | 'SCM';  // 50m or 25m
   timeSeconds: number;
-  timeText: string;        // e.g., "56.34"
+  timeText: string;        // e.g., "56.29"
   finaPoints: number;
-  date?: string;
-  meet?: string;
+  date: string;            // e.g., "20 Feb 2026"
+  city: string;            // e.g., "Calgary (AB)"
+  meet: string;            // e.g., "Western Transmountain Festival"
 }
 
 export interface ParsedMeet {
@@ -51,10 +54,10 @@ export interface ParsedProfile {
 
 /**
  * Parse time string to seconds.
- * Handles: "56.34", "1:02.34", "2:07.54", "14:32.78"
+ * Handles: "56.29", "1:02.34", "2:07.54", "14:32.78", "18:22.33"
  */
 function parseTimeToSeconds(timeStr: string): number {
-  const cleaned = timeStr.trim().replace(/[^\d:.]/g, '');
+  const cleaned = timeStr.trim();
   if (!cleaned) return 0;
 
   const parts = cleaned.split(':');
@@ -69,48 +72,42 @@ function parseTimeToSeconds(timeStr: string): number {
 }
 
 /**
- * Normalize stroke name to canonical form.
+ * Normalize stroke name from SwimRankings format.
  */
 function normalizeStroke(raw: string): string {
-  const lower = raw.toLowerCase();
-  if (lower.includes('free')) return 'Freestyle';
-  if (lower.includes('back')) return 'Backstroke';
-  if (lower.includes('breast')) return 'Breaststroke';
-  if (lower.includes('fly') || lower.includes('butter')) return 'Butterfly';
-  if (lower.includes('medley') || lower.includes('im')) return 'IM';
+  const lower = raw.toLowerCase().trim();
+  if (lower === 'freestyle' || lower === 'freestyle lap') return 'Freestyle';
+  if (lower === 'backstroke') return 'Backstroke';
+  if (lower === 'breaststroke') return 'Breaststroke';
+  if (lower === 'butterfly' || lower === 'butterfly lap') return 'Butterfly';
+  if (lower === 'medley') return 'IM';
   return raw;
 }
 
 /**
- * Parse an event name like "100 m Freestyle" into distance and stroke.
+ * Parse course: "50m" → "LCM", "25m" → "SCM"
  */
-function parseEventName(eventName: string): { distance: number; stroke: string } {
-  const match = eventName.match(/(\d+)\s*m?\s+(.+)/);
-  if (match) {
-    return {
-      distance: parseInt(match[1]),
-      stroke: normalizeStroke(match[2]),
-    };
-  }
-  return { distance: 0, stroke: eventName };
+function parseCourse(courseStr: string): 'LCM' | 'SCM' {
+  return courseStr.trim() === '50m' ? 'LCM' : 'SCM';
 }
 
 /**
- * Parse course length: "50m" → "LCM", "25m" → "SCM"
+ * Map event to our slug format.
+ * "100m Freestyle" + "50m" → "100-free"
  */
-function parseCourse(courseStr: string): 'LCM' | 'SCM' {
-  if (courseStr.includes('50') || courseStr.toLowerCase().includes('lcm')) return 'LCM';
-  return 'SCM';
+function eventToSlug(distance: number, stroke: string): string {
+  const strokeMap: Record<string, string> = {
+    'Freestyle': 'free',
+    'Backstroke': 'back',
+    'Breaststroke': 'breast',
+    'Butterfly': 'fly',
+    'IM': 'im',
+  };
+  return `${distance}-${strokeMap[stroke] || stroke.toLowerCase()}`;
 }
 
 /**
  * Parse the pasted text content from a SwimRankings athlete page.
- *
- * SwimRankings pages have a consistent text layout when copied:
- * - Name with birth year in parentheses at the top
- * - Country and club info
- * - Personal bests table with event, course, time, FINA points
- * - Meet history with dates and locations
  */
 export function parseSwimRankingsText(
   text: string,
@@ -120,8 +117,7 @@ export function parseSwimRankingsText(
 
   if (lines.length < 5) return null;
 
-  // Parse swimmer identity
-  // Pattern: "LastName, FirstName (YYYY)" somewhere near the top
+  // === Parse swimmer identity ===
   let firstName = '';
   let lastName = '';
   let birthYear = 0;
@@ -130,168 +126,158 @@ export function parseSwimRankingsText(
   let countryCode = '';
   let club = '';
 
-  for (const line of lines.slice(0, 20)) {
-    // Look for "LastName, FirstName (YYYY)" pattern
-    const nameMatch = line.match(/^([A-Za-zÀ-ÿ\s'-]+),\s*([A-Za-zÀ-ÿ\s'-]+)\s*\((\d{4})\)/);
-    if (nameMatch) {
-      lastName = nameMatch[1].trim();
+  for (let i = 0; i < Math.min(lines.length, 30); i++) {
+    const line = lines[i];
+
+    // Name: "BURGER, Noa Josh" — all caps last name, comma, first name(s)
+    const nameMatch = line.match(/^([A-ZÀ-Ü][A-ZÀ-Ü'-]+),\s+(.+)$/);
+    if (nameMatch && !firstName) {
+      lastName = nameMatch[1].charAt(0) + nameMatch[1].slice(1).toLowerCase();
       firstName = nameMatch[2].trim();
-      birthYear = parseInt(nameMatch[3]);
       continue;
     }
 
-    // Also try "LastName, FirstName(YYYY)" without space
-    const nameMatch2 = line.match(/^([A-Za-zÀ-ÿ\s'-]+),\s*([A-Za-zÀ-ÿ\s'-]+)\((\d{4})\)/);
-    if (nameMatch2 && !firstName) {
-      lastName = nameMatch2[1].trim();
-      firstName = nameMatch2[2].trim();
-      birthYear = parseInt(nameMatch2[3]);
+    // Birth year: "(2012  )" or "(2012)" — standalone line with year in parens
+    const yearMatch = line.match(/^\((\d{4})\s*\)$/);
+    if (yearMatch && !birthYear) {
+      birthYear = parseInt(yearMatch[1]);
       continue;
     }
 
-    // Look for country code pattern like "RSA" or "CAN"
-    const countryMatch = line.match(/^([A-Z]{3})\s+-\s+(.+)/);
+    // Country: "CAN - Canada"
+    const countryMatch = line.match(/^([A-Z]{3})\s+-\s+(.+)$/);
     if (countryMatch && !countryCode) {
       countryCode = countryMatch[1];
       country = countryMatch[2].trim();
       continue;
     }
 
-    // Gender detection from SwimRankings
-    if (line.toLowerCase().includes('male') && !line.toLowerCase().includes('female')) {
-      gender = 'M';
-    } else if (line.toLowerCase().includes('female')) {
-      gender = 'F';
-    }
-  }
-
-  // If we couldn't find name in standard format, try broader patterns
-  if (!firstName) {
-    for (const line of lines.slice(0, 10)) {
-      // Try "LastName, FirstName" without year
-      const simpleMatch = line.match(/^([A-Za-zÀ-ÿ'-]+),\s+([A-Za-zÀ-ÿ\s'-]+)$/);
-      if (simpleMatch) {
-        lastName = simpleMatch[1].trim();
-        firstName = simpleMatch[2].trim();
-        break;
-      }
-    }
-  }
-
-  // Find club name — often after country line
-  for (const line of lines.slice(0, 20)) {
-    // Club names are often standalone lines after the country info
-    if (line.match(/^[A-Za-z].*(?:Club|Swimming|Swim|SC|AC|SS|Aquatic|Patriots|Academy)/i)) {
-      if (!line.match(/^\d/) && !line.includes('Personal') && !line.includes('Meet')) {
+    // Club: line after country, typically contains "Club", "Swimming", "Swim", "SC", etc.
+    if (countryCode && !club && !line.match(/^Personal|^Record|^Meet|^Bio|^swim/i)) {
+      if (line.match(/club|swimming|swim|sc$|aquatic|patriot|academy/i) ||
+          (i > 0 && lines[i-1].match(/^[A-Z]{3}\s+-\s+/))) {
         club = line;
-        break;
+        continue;
       }
     }
   }
 
-  // Parse personal bests
+  // === Parse personal bests ===
   const personalBests: ParsedPersonalBest[] = [];
   let inPBSection = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Detect PB section
-    if (line.includes('Personal Best') || line.includes('personal best')) {
+    // Start of PB section
+    if (line.match(/^Personal bests/i) || line.match(/^Event\s+Course\s+Time/)) {
       inPBSection = true;
       continue;
     }
 
-    // Detect end of PB section
-    if (inPBSection && (line.includes('Meet Results') || line.includes('Meet History') || line.includes('Meets'))) {
-      inPBSection = false;
+    // Skip header row
+    if (line.match(/^Event\s+Course\s+Time\s+Pts/)) {
       continue;
     }
 
     if (!inPBSection) continue;
 
-    // Try to parse PB lines
-    // Typical format: "100 m Freestyle  50m  56.34  567"
-    // Or: "100 m Freestyle\t50m\t56.34\t567"
+    // End of PB section — detect meet/records/biography sections
+    if (line.match(/^Records|^Meets|^Biography|^swimstats|^Meet Results/i) && !line.match(/^\d+m/)) {
+      break;
+    }
+
+    // Parse PB row:
+    // "100m Freestyle    50m    56.29    560    20 Feb 2026    Calgary (AB)    Western Transmountain Festival ..."
+    // Also: "50m Freestyle Lap    50m    26.66    -    30 May 2025    Calgary    CSI 2025"
     const pbMatch = line.match(
-      /(\d+\s*m?\s+[A-Za-z\s]+?)\s+(25m|50m|SCM|LCM)\s+(\d+[:.]\d+(?:\.\d+)?)\s*(\d*)/
+      /^(\d+)m\s+([A-Za-z\s]+?)\s{2,}(25m|50m)\s{2,}(\d+[:.]\d+(?:\.\d+)?)\s{2,}(\d+|-)\s{2,}(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s{2,}([^\t]+?)\s{2,}(.+)$/
     );
+
     if (pbMatch) {
-      const eventName = pbMatch[1].trim();
-      const { distance, stroke } = parseEventName(eventName);
-      const course = parseCourse(pbMatch[2]);
-      const timeText = pbMatch[3];
+      const distance = parseInt(pbMatch[1]);
+      const strokeRaw = pbMatch[2].trim();
+      const courseStr = pbMatch[3];
+      const timeText = pbMatch[4];
+      const ptsStr = pbMatch[5];
+      const date = pbMatch[6].trim();
+      const city = pbMatch[7].trim();
+      const meet = pbMatch[8].trim();
+
+      // Skip "Lap" events (relay split times)
+      if (strokeRaw.toLowerCase().includes('lap')) continue;
+
+      const stroke = normalizeStroke(strokeRaw);
+      const course = parseCourse(courseStr);
       const timeSeconds = parseTimeToSeconds(timeText);
-      const finaPoints = pbMatch[4] ? parseInt(pbMatch[4]) : 0;
+      const finaPoints = ptsStr === '-' ? 0 : parseInt(ptsStr) || 0;
 
       personalBests.push({
-        eventName,
+        eventName: `${distance}m ${strokeRaw}`,
         distance,
         stroke,
         course,
         timeSeconds,
         timeText,
         finaPoints,
+        date,
+        city,
+        meet,
       });
       continue;
     }
 
-    // Alternative: tab-separated or multi-space separated
-    const parts = line.split(/\t+|\s{2,}/);
-    if (parts.length >= 3) {
-      const possibleEvent = parts[0];
-      const possibleCourse = parts[1];
-      const possibleTime = parts[2];
+    // Try a more lenient parse — tab separated
+    const parts = line.split(/\t+/);
+    if (parts.length >= 4) {
+      const eventMatch = parts[0].match(/^(\d+)m\s+(.+)/);
+      const courseMatch = parts[1]?.match(/^(25m|50m)$/);
+      const timeMatch = parts[2]?.match(/^(\d+[:.]\d+(?:\.\d+)?)$/);
 
-      if (
-        possibleEvent.match(/\d+\s*m?\s+[A-Za-z]/) &&
-        possibleCourse.match(/25m|50m/i) &&
-        possibleTime.match(/^\d+[:.]\d+/)
-      ) {
-        const { distance, stroke } = parseEventName(possibleEvent);
-        const course = parseCourse(possibleCourse);
-        const timeText = possibleTime;
-        const timeSeconds = parseTimeToSeconds(timeText);
-        const finaPoints = parts[3] ? parseInt(parts[3]) || 0 : 0;
+      if (eventMatch && courseMatch && timeMatch) {
+        const distance = parseInt(eventMatch[1]);
+        const strokeRaw = eventMatch[2].trim();
+
+        if (strokeRaw.toLowerCase().includes('lap')) continue;
+
+        const stroke = normalizeStroke(strokeRaw);
+        const course = parseCourse(courseMatch[1]);
+        const timeSeconds = parseTimeToSeconds(timeMatch[1]);
+        const finaPoints = parts[3] ? (parts[3] === '-' ? 0 : parseInt(parts[3]) || 0) : 0;
+        const date = parts[4]?.trim() || '';
+        const city = parts[5]?.trim() || '';
+        const meet = parts[6]?.trim() || '';
 
         personalBests.push({
-          eventName: possibleEvent.trim(),
+          eventName: `${distance}m ${strokeRaw}`,
           distance,
           stroke,
           course,
           timeSeconds,
-          timeText,
+          timeText: timeMatch[1],
           finaPoints,
+          date,
+          city,
+          meet,
         });
       }
     }
   }
 
-  // Parse meet history
-  const meets: ParsedMeet[] = [];
-  let inMeetSection = false;
-
-  for (const line of lines) {
-    if (line.includes('Meet') && (line.includes('Results') || line.includes('History'))) {
-      inMeetSection = true;
-      continue;
-    }
-
-    if (!inMeetSection) continue;
-
-    // Meet lines typically: "01.02.2026  Edmonton  Edmonton Open"
-    // Or: "Jan 30, 2026  Edmonton  Edmonton Open"
-    const meetMatch = line.match(
-      /(\d{1,2}[./]\d{1,2}[./]\d{2,4})\s+([A-Za-zÀ-ÿ\s'-]+?)\s{2,}(.+)/
-    );
-    if (meetMatch) {
-      meets.push({
-        date: meetMatch[1].trim(),
-        city: meetMatch[2].trim(),
-        name: meetMatch[3].trim(),
+  // === Extract unique meets from PB data ===
+  const meetMap = new Map<string, ParsedMeet>();
+  for (const pb of personalBests) {
+    const key = `${pb.date}-${pb.city}`;
+    if (!meetMap.has(key) && pb.date) {
+      meetMap.set(key, {
+        date: pb.date,
+        city: pb.city,
+        name: pb.meet,
+        course: pb.course === 'LCM' ? '50m' : '25m',
       });
     }
   }
+  const meets = Array.from(meetMap.values());
 
   // Only return if we got something useful
   if (!firstName && !lastName && personalBests.length === 0) {
@@ -316,14 +302,19 @@ export function parseSwimRankingsText(
 }
 
 /**
+ * Utility: get event slug from parsed PB
+ */
+export function pbToEventSlug(pb: ParsedPersonalBest): string {
+  return eventToSlug(pb.distance, pb.stroke);
+}
+
+/**
  * Parse HTML content from a saved SwimRankings page.
- * This handles the case where someone saves the page as HTML.
  */
 export function parseSwimRankingsHTML(
   html: string,
   athleteId: string
 ): ParsedProfile | null {
-  // Create a temporary element to parse HTML
   if (typeof document === 'undefined') return null;
 
   const parser = new DOMParser();
@@ -337,19 +328,17 @@ export function parseSwimRankingsHTML(
 
   if (nameDiv) {
     const nameText = nameDiv.textContent || '';
-    const nameMatch = nameText.match(/([A-Za-zÀ-ÿ\s'-]+),\s*([A-Za-zÀ-ÿ\s'-]+)\s*\(?(\d{4})\)?/);
+    const nameMatch = nameText.match(/([A-ZÀ-Ü][A-ZÀ-Ü'-]+),\s*([A-Za-zÀ-ÿ\s'-]+)\s*\(?(\d{4})\)?/);
     if (nameMatch) {
-      lastName = nameMatch[1].trim();
+      lastName = nameMatch[1].charAt(0) + nameMatch[1].slice(1).toLowerCase();
       firstName = nameMatch[2].replace(/\d/g, '').trim();
       birthYear = parseInt(nameMatch[3]);
     }
   }
 
-  // Extract gender
   const genderImg = doc.querySelector('#name img');
   const gender: 'M' | 'F' = genderImg?.getAttribute('src')?.includes('gender1') ? 'M' : 'F';
 
-  // Extract country and club
   const nationDiv = doc.querySelector('#nationclub');
   let country = '';
   let countryCode = '';
@@ -362,14 +351,12 @@ export function parseSwimRankingsHTML(
       countryCode = countryMatch[1];
       country = countryMatch[2].trim();
     }
-    // Club is usually the remaining text
     const parts = text.split('\n').map(p => p.trim()).filter(p => p);
     if (parts.length > 1) {
       club = parts[parts.length - 1];
     }
   }
 
-  // Extract personal bests from table
   const personalBests: ParsedPersonalBest[] = [];
   const pbTable = doc.querySelector('table.athleteBest');
 
@@ -383,10 +370,14 @@ export function parseSwimRankingsHTML(
         const timeText = cells[2].textContent?.trim() || '';
         const finaStr = cells[3].textContent?.trim() || '';
 
-        const { distance, stroke } = parseEventName(eventName);
+        const evMatch = eventName.match(/(\d+)m\s+(.+)/);
+        if (!evMatch) return;
+        if (evMatch[2].toLowerCase().includes('lap')) return;
+
+        const distance = parseInt(evMatch[1]);
+        const stroke = normalizeStroke(evMatch[2]);
         const course = parseCourse(courseStr);
         const timeSeconds = parseTimeToSeconds(timeText);
-        const finaPoints = parseInt(finaStr) || 0;
 
         personalBests.push({
           eventName,
@@ -395,32 +386,16 @@ export function parseSwimRankingsHTML(
           course,
           timeSeconds,
           timeText,
-          finaPoints,
+          finaPoints: parseInt(finaStr) || 0,
+          date: cells[4]?.textContent?.trim() || '',
+          city: cells[5]?.textContent?.trim() || '',
+          meet: cells[6]?.textContent?.trim() || '',
         });
       }
     });
   }
 
-  // Extract meets
   const meets: ParsedMeet[] = [];
-  const meetTable = doc.querySelector('table.athleteMeet');
-
-  if (meetTable) {
-    const rows = meetTable.querySelectorAll('tr.athleteMeet0, tr.athleteMeet1');
-    rows.forEach(row => {
-      const dateCell = row.querySelector('td.date');
-      const cityCell = row.querySelector('td.city');
-
-      if (dateCell && cityCell) {
-        const date = dateCell.textContent?.trim() || '';
-        const link = cityCell.querySelector('a');
-        const city = link?.textContent?.trim() || '';
-        const name = link?.getAttribute('title') || city;
-
-        meets.push({ date, city, name });
-      }
-    });
-  }
 
   if (!firstName && !lastName && personalBests.length === 0) {
     return null;

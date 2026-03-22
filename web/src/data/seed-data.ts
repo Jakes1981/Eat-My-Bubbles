@@ -15,10 +15,10 @@ export const SWIMMERS: Swimmer[] = [
   {
     id: 'noa',
     name: 'Noa Burger',
-    birthYear: 2011,
-    club: 'Calgary Patriots',
+    birthYear: 2012,
+    club: 'Calgary Patriots Swim Club',
     province: 'AB',
-    country: 'CA',
+    country: 'CAN',
     gender: 'M',
   },
   {

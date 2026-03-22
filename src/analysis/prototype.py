@@ -19,7 +19,7 @@ from src.processors.conversions import convert_time, CourseType
 
 NOA_PROFILE = {
     "name": "Noa Burger",
-    "birth_year": 2011,  # Competing in 13-14 age group in 2025-26 season
+    "birth_year": 2012,  # Competing in 13-14 age group in 2025-26 season
     "club": "Calgary Patriots",
     "province": "AB",
     "country": "CA",
